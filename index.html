@@ -2075,7 +2075,7 @@
         try{
           if (!("serviceWorker" in navigator) || !("PushManager" in window)){ el.textContent = "Not supported"; return; }
           if (Notification.permission === "denied"){ el.textContent = "Blocked"; return; }
-          var reg = await navigator.serviceWorker.getRegistration("/sw.js");
+          var reg = await navigator.serviceWorker.getRegistration();
           var sub = reg ? await reg.pushManager.getSubscription() : null;
           el.textContent = sub ? "On" : "Off";
         }catch(e){ el.textContent = "Off"; }

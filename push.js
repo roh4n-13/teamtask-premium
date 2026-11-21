@@ -74,7 +74,13 @@ export async function enablePush(sb, profileId) {
 
   let registration;
   try {
-    registration = await navigator.serviceWorker.register('/sw.js');
+    // Relative path + scope: the app is deployed under a sub-path
+    // (GitHub Pages /teamtask-premium/), so an absolute '/sw.js' would
+    // 404 at the domain root. './' resolves to the app's own directory.
+    registration = await navigator.serviceWorker.register('sw.js', { scope: './' });
+    // subscribe() throws "no active Service Worker" while the worker is
+    // still installing — wait until it is active first.
+    await navigator.serviceWorker.ready;
   } catch (err) {
     console.error('[push] service worker registration failed:', err);
     return { ok: false, reason: 'sw_register_failed' };
@@ -155,7 +161,9 @@ export async function disablePush(sb, profileId) {
 
   let registration;
   try {
-    registration = await navigator.serviceWorker.getRegistration('/sw.js');
+    // No-arg getRegistration returns the registration for this page's
+    // scope (the app's own directory under GitHub Pages).
+    registration = await navigator.serviceWorker.getRegistration();
   } catch (err) {
     console.error('[push] getRegistration failed:', err);
     return { ok: false, reason: 'sw_error' };

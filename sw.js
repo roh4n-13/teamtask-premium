@@ -24,7 +24,7 @@ self.addEventListener('push', (event) => {
 
   const title = data.title || 'TeamTask';
   const body = data.body || '';
-  const url = data.url || '/';
+  const url = data.url || './';
 
   const promise = self.registration.showNotification(title, {
     body,
@@ -36,7 +36,7 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || '/';
+  const url = (event.notification.data && event.notification.data.url) || './';
 
   const promise = self.clients.matchAll({ type: 'window', includeUncontrolled: true })
     .then((clients) => {
