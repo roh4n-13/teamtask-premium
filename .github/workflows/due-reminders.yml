@@ -2,7 +2,7 @@
 #
 # SETUP (once, in the repo settings — NOT in this file):
 #   Create a GitHub Actions secret named DUE_REMINDERS_SECRET whose value
-#   equals the Supabase function secret WEBHOOK_SECRET for this project.
+#   equals the Supabase function secret DUE_REMINDERS_SECRET for this project.
 #   No secret or key is stored in this file.
 #
 # The function itself authenticates the call with the shared-secret
