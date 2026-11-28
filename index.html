@@ -192,6 +192,14 @@
       .back-link{ display:inline-flex; align-items:center; gap:0.125rem; color:var(--accent); font-size:1rem; font-weight:600; padding:0.375rem 0.375rem 0.375rem 0; margin-left:-0.125rem; transition:transform .18s var(--ease); }
       .back-link:active{ transform:scale(.96); }
       .chip-row{ display:flex; flex-wrap:wrap; gap:0.5rem; margin-top:0.875rem; }
+      /* ---------- Tasks: filter chips ----------
+         One horizontally scrollable row; chips reuse .reason-chip
+         (selected = accent tint #FDE9E2 + #B3340A text). */
+      .filter-row{ display:flex; gap:0.5rem; margin-top:0.75rem; overflow-x:auto; scrollbar-width:none; padding-bottom:0.125rem; }
+      .filter-row::-webkit-scrollbar{ display:none; }
+      .filter-row .reason-chip{ flex:none; white-space:nowrap; }
+      .filter-clear{ flex:none; min-height:2.375rem; padding:0.5rem 0.5rem; border-radius:62.4375rem; background:none; color:var(--danger-ink); font-size:0.875rem; font-weight:600; }
+      .filter-clear:active{ transform:scale(.95); }
       .ba{ position:relative; height:13.25rem; border-radius:1.5rem; overflow:hidden; margin-top:1.125rem; touch-action:none; user-select:none; -webkit-user-select:none; }
       .ba-layer{ position:absolute; inset:0; }
       .ba-before{ background:#D8D2C2; }
@@ -372,6 +380,10 @@
       .picker-opt .pcheck{ color:var(--accent); display:none; flex:none; }
       .picker-opt.sel{ font-weight:600; }
       .picker-opt.sel .pcheck{ display:flex; }
+      /* Disabled recipient in the move sheet (self-transfer): dimmed,
+         no accent, no press effect. */
+      .picker-opt.disabled{ opacity:.45; }
+      .picker-opt.disabled:active{ transform:none; opacity:.45; }
       .status-dot{ width:0.5rem; height:0.5rem; border-radius:50%; flex:none; }
       .picker-cancel{ width:100%; height:3.25rem; border-radius:1rem; background:var(--neutral-bg); color:var(--ink); font-size:1rem; font-weight:600; margin-top:0.75rem; transition:transform .18s var(--ease); }
       .picker-cancel:active{ transform:scale(.97); }
@@ -821,6 +833,20 @@
           <button class="on" data-seg="all" id="taskSegAll">All</button>
           <button data-seg="mine">Mine</button>
           <button data-seg="team">Team</button>
+        </div>
+        <div class="filter-row" id="taskFilters">
+          <button class="reason-chip filter-team-chip" data-fteam="art" style="display:none;">Art</button>
+          <button class="reason-chip filter-team-chip" data-fteam="cafe" style="display:none;">Cafe Table</button>
+          <button class="reason-chip filter-team-chip" data-fteam="theatre" style="display:none;">Theatre</button>
+          <button class="reason-chip filter-team-chip" data-fteam="team4" style="display:none;">Team 4</button>
+          <button class="reason-chip" data-fprio="Low">Low</button>
+          <button class="reason-chip" data-fprio="Normal">Normal</button>
+          <button class="reason-chip" data-fprio="Urgent">Urgent</button>
+          <button class="reason-chip" data-foverdue="1">Overdue only</button>
+          <button class="reason-chip" data-ftoday="1">Due today</button>
+          <button class="reason-chip" data-fstatus="pending">Pending</button>
+          <button class="reason-chip" data-fstatus="done">Done</button>
+          <button class="filter-clear" id="taskFilterClear" style="display:none;">Clear</button>
         </div>
         <div id="taskGroups"></div>
         <div class="card empty-note" id="taskEmpty" style="display:none; margin-top:1.125rem;">No tasks match.</div>
@@ -1934,7 +1960,11 @@
             });
           }catch(e){}
         }
-        if (seq !== loadSeq) return;
+        /* A superseded load that already rebuilt tasks must still
+           render: bailing here used to leave the Team tallies showing
+           the pre-move counts until the next 20 s tick. A newer load
+           in flight will re-render again with its own data. */
+        if (seq !== loadSeq){ renderAll(); return; }
         renderAll();
       }
       function renderAll(){
@@ -2030,7 +2060,7 @@
         }catch(e){ var d = new Date(ts); return d.getHours() * 60 + d.getMinutes(); }
       }
       function kindLabel(kind){
-        var map = { assigned:"Task assigned", submitted:"Approval requested", approved:"Approved", rejected:"Rejected", nudge:"Nudge", overdue:"Reminder", leave_requested:"Leave requested", leave_approved:"Leave approved", leave_rejected:"Leave rejected", fix_requested:"Fix requested", fix_resolved:"Fix resolved", deadline:"Due date" };
+        var map = { assigned:"Task assigned", submitted:"Approval requested", approved:"Approved", rejected:"Rejected", nudge:"Nudge", overdue:"Reminder", leave_requested:"Leave requested", leave_approved:"Leave approved", leave_rejected:"Leave rejected", fix_requested:"Fix requested", fix_resolved:"Fix resolved", deadline:"Due date", due_reminder:"Due soon" };
         return map[kind] || "";
       }
       function buildAcct(prof, team){
@@ -2536,6 +2566,10 @@
       };
       var tasks = []; /* Seed data removed (S-1): tasks load from Supabase in the wiring step. */
       var taskFilter = "all", taskQuery = "";
+      /* Tasks-screen filters (Job 2): single-select within each group;
+         empty / false = that filter off. Search (taskQuery) and the
+         All/Mine/Team segment are separate and untouched. */
+      var filterTeam = "", filterPriority = "", filterOverdue = false, filterToday = false, filterStatus = "";
       var GROUPS = [ ["overdue","Overdue"], ["today","Today"], ["upcoming","Upcoming"] ];
 
       /* ---------------- session user (scaffold) ----------------
@@ -2573,6 +2607,7 @@
         return false;
       }
       function renderTasks(){
+        syncTaskFilters();
         var wrap = $("#taskGroups");
         wrap.innerHTML = "";
         var anyVisible = false;
@@ -2586,6 +2621,16 @@
               var hay = (t.title + " " + t.team + " " + t.assignee).toLowerCase();
               if (hay.indexOf(taskQuery) === -1) return false;
             }
+            /* Filter chips: applied after scope / segment / search,
+               so they can never leak tasks outside the viewer's role.
+               Priority matches t.priority (the capitalised DB value),
+               not t.chip (which becomes e.g. "2d late" when overdue). */
+            if (filterTeam && t.teamKey !== filterTeam) return false;
+            if (filterPriority && t.priority !== filterPriority) return false;
+            if (filterOverdue && !(t.group === "overdue" && !t.done)) return false;
+            if (filterToday && t.group !== "today") return false;
+            if (filterStatus === "pending" && t.done) return false;
+            if (filterStatus === "done" && !t.done) return false;
             return true;
           });
           if (!rows.length) return;
@@ -2618,7 +2663,7 @@
         });
         if (currentScreen === "tasks") staggerIn($$("[data-stag]", wrap));
         $("#taskEmpty").style.display = anyVisible ? "none" : "block";
-        if (!anyVisible && (role === "member" || taskFilter === "mine") && !taskQuery){
+        if (!anyVisible && (role === "member" || taskFilter === "mine") && !taskQuery && !taskFiltersActive()){
           $("#taskEmpty").textContent = "Nothing assigned to you right now.";
         } else {
           $("#taskEmpty").textContent = "No tasks match.";
@@ -2636,6 +2681,49 @@
       });
       $("#searchInput").addEventListener("input", function(e){
         taskQuery = e.target.value.trim().toLowerCase();
+        renderTasks();
+      });
+      /* ---------------- Tasks: filter chips ----------------
+         Single-select within each group; tapping a selected chip
+         clears it. Team is Admin only — managers/members never see
+         it (their scope is already one team / self). Clear resets
+         only the filters, never the search box or the segment. */
+      function taskFiltersActive(){
+        return !!(filterTeam || filterPriority || filterOverdue || filterToday || filterStatus);
+      }
+      function syncTaskFilters(){
+        if (role !== "admin") filterTeam = "";
+        $$("#taskFilters [data-fteam]").forEach(function(b){
+          b.style.display = role === "admin" ? "" : "none";
+          b.classList.toggle("sel", filterTeam === b.getAttribute("data-fteam"));
+        });
+        $$("#taskFilters [data-fprio]").forEach(function(b){ b.classList.toggle("sel", filterPriority === b.getAttribute("data-fprio")); });
+        $$("#taskFilters [data-foverdue]").forEach(function(b){ b.classList.toggle("sel", filterOverdue); });
+        $$("#taskFilters [data-ftoday]").forEach(function(b){ b.classList.toggle("sel", filterToday); });
+        $$("#taskFilters [data-fstatus]").forEach(function(b){ b.classList.toggle("sel", filterStatus === b.getAttribute("data-fstatus")); });
+        $("#taskFilterClear").style.display = taskFiltersActive() ? "" : "none";
+      }
+      $("#taskFilters").addEventListener("click", function(e){
+        var b = e.target && e.target.closest ? e.target.closest("button") : null;
+        if (!b || !$("#taskFilters").contains(b)) return;
+        var val;
+        if (b.id === "taskFilterClear"){
+          filterTeam = ""; filterPriority = ""; filterOverdue = false; filterToday = false; filterStatus = "";
+        } else if (b.hasAttribute("data-fteam")){
+          val = b.getAttribute("data-fteam");
+          filterTeam = filterTeam === val ? "" : val;
+        } else if (b.hasAttribute("data-fprio")){
+          val = b.getAttribute("data-fprio");
+          filterPriority = filterPriority === val ? "" : val;
+        } else if (b.hasAttribute("data-foverdue")){
+          filterOverdue = !filterOverdue;
+        } else if (b.hasAttribute("data-ftoday")){
+          filterToday = !filterToday;
+        } else if (b.hasAttribute("data-fstatus")){
+          val = b.getAttribute("data-fstatus");
+          filterStatus = filterStatus === val ? "" : val;
+        } else return;
+        syncTaskFilters();
         renderTasks();
       });
       $$("[data-open-task]").forEach(function(b){
@@ -3477,15 +3565,35 @@
         if (!list.children.length){
           list.innerHTML = '<p class="sub" style="padding:0.5rem 0.125rem;">No open tasks in this team right now.</p>';
         }
+        /* Self-transfer block: a member who already owns every
+           selected task is not a valid recipient. With nothing
+           selected, or a selection spanning several owners, every
+           recipient stays enabled. A recipient who becomes invalid
+           after the selection changes loses the pending choice, so
+           the confirm button cannot offer a no-op move. */
+        var selTasks = [];
+        for (var k in moveState.sel) if (moveState.sel[k]){
+          var st = taskById(moveState.sel[k].gid);
+          if (st) selTasks.push(st);
+        }
+        function ownsAllSel(name){
+          return selTasks.length > 0 && selTasks.every(function(t){ return t.assignee === name; });
+        }
+        if (moveState.to && ownsAllSel(moveState.to)) moveState.to = null;
         var toList = $("#moveToList");
         toList.innerHTML = "";
         members.forEach(function(m){
           var c = countFor(m.name);
+          var selfOnly = ownsAllSel(m.name);
           var b = document.createElement("button");
-          b.className = "picker-opt" + (moveState.to === m.name ? " sel" : "");
+          b.className = "picker-opt" + (moveState.to === m.name ? " sel" : "") + (selfOnly ? " disabled" : "");
           b.setAttribute("data-stag", "");
-          b.innerHTML = '<span class="move-radio"></span><span class="grow">' + esc(m.name) + '</span><span style="color:var(--sec); font-size:0.875rem; font-weight:500;">' + c + (c === 1 ? " task" : " tasks") + '</span>';
-          b.addEventListener("click", function(){ moveState.to = m.name; renderMove(); });
+          b.innerHTML = '<span class="move-radio"></span><span class="grow">' + esc(m.name) + '</span>' +
+            (selfOnly
+              ? '<span style="color:var(--sec); font-size:0.875rem; font-weight:500;">Already assigned</span>'
+              : '<span style="color:var(--sec); font-size:0.875rem; font-weight:500;">' + c + (c === 1 ? " task" : " tasks") + '</span>');
+          if (selfOnly){ b.disabled = true; b.setAttribute("aria-disabled", "true"); }
+          else b.addEventListener("click", function(){ moveState.to = m.name; renderMove(); });
           toList.appendChild(b);
         });
         var n = moveSelCount();
@@ -3514,16 +3622,34 @@
         if (!toProfile){ toast("Couldn't find that member"); return; }
         var picked = [];
         for (var k in moveState.sel) if (moveState.sel[k]) picked.push(moveState.sel[k]);
+        /* Self-transfer guard: the recipient already owns every
+           selected task, so there is nothing to move — abort before
+           any DB write, activity log or notification. */
+        var selfMove = picked.length > 0 && picked.every(function(p){
+          var gt = taskById(p.gid);
+          return gt && gt.assignee === to;
+        });
+        if (selfMove){ toast("Already assigned to " + to); return; }
         try{
           for (var i = 0; i < picked.length; i++){
             var gt = taskById(picked[i].gid);
             if (!gt) continue;
             var err = (await sb.from("tasks").update({ assignee_id: toProfile.id }).eq("id", gt.id)).error;
             if (err) throw err;
+            /* Optimistic local update: the DB write already succeeded,
+               so move the task in the in-memory model right away. If
+               the loadAll below bails on its seq guard (a newer reload
+               in flight), the Team tallies are still correct the
+               moment the sheet closes; the reload reconciles after. */
+            gt.assignee = toProfile.name; gt.assigneeId = toProfile.id; gt.first = toProfile.name.split(" ")[0];
             await logActivity(gt.id, "moved", 'Moved "' + gt.title + '" to ' + toProfile.name);
             await notifyUsers([toProfile.id], "assigned", persona().name + ' moved "' + gt.title + '" to you', { task_id: gt.id });
           }
           await loadAll();
+          /* Re-render from the just-loaded tasks even if loadAll
+             bailed on its seq guard (a newer load in flight): the
+             Team tallies must be correct the moment the move ends. */
+          renderAll();
           requestCloseSheet("move", closeMove);
           toast("Moved " + n + (n === 1 ? " task" : " tasks") + " to " + to);
         }catch(e){ toast("Couldn't move the tasks — try again"); }
