@@ -1,0 +1,29 @@
+# Due reminders — calls the due-reminders Edge Function every 15 minutes.
+#
+# SETUP (once, in the repo settings — NOT in this file):
+#   Create a GitHub Actions secret named DUE_REMINDERS_SECRET whose value
+#   equals the Supabase function secret WEBHOOK_SECRET for this project.
+#   No secret or key is stored in this file.
+#
+# The function itself authenticates the call with the shared-secret
+# header `x-webhook-secret` (checked inside the function); it runs
+# with verify_jwt = false (see supabase/config.toml) because GitHub
+# Actions cannot send a user JWT.
+
+name: Due reminders
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # every 15 minutes
+  workflow_dispatch: # manual run from the Actions tab
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call due-reminders function
+        run: |
+          curl --fail -sS -X POST "https://qwzdvjnrqnajrrsiwpet.supabase.co/functions/v1/due-reminders" \
+            -H "x-webhook-secret: ${{ secrets.DUE_REMINDERS_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{}'
